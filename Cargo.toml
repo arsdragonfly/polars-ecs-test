@@ -1,0 +1,9 @@
+[package]
+name = "polars-ecs-test"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+jemallocator = { version = "*" }
+polars = { path = "../polars/crates/polars", features = ["nightly", "dtype-full", "lazy", "polars-ops"] }
+rand = { version = "0.8.5" }
