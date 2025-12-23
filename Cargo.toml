@@ -91,11 +91,33 @@ path = "src/arrow_polars_overhead.rs"
 name = "arrow_zerocopy_test"
 path = "src/arrow_zerocopy_test.rs"
 
+[[bin]]
+name = "piccolo_duckdb_poc"
+path = "src/piccolo_duckdb_poc.rs"
+
+[[bin]]
+name = "lua_query_overhead"
+path = "src/lua_query_overhead.rs"
+
+[[bin]]
+name = "lua_udf_threadlocal"
+path = "src/lua_udf_threadlocal.rs"
+
+[[bin]]
+name = "duckdb_lua_vscalar"
+path = "src/duckdb_lua_vscalar.rs"
+
+[[bin]]
+name = "lua_vm_comparison"
+path = "src/lua_vm_comparison.rs"
+
 [dependencies]
 jemallocator = { version = "*" }
 polars = { version = "0.46", features = ["dtype-full", "lazy"] }
 rand = { version = "0.8.5" }
-duckdb = { version = "1.1.1", features = ["bundled"] }
+duckdb = { version = "1.1.1", features = ["bundled", "vtab", "vtab-arrow", "vscalar", "vscalar-arrow"] }
+piccolo = "0.3.3"
+mlua = { version = "0.10", features = ["luajit", "vendored"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
