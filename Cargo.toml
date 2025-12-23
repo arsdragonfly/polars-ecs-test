@@ -1,9 +1,105 @@
 [package]
 name = "polars-ecs-test"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+
+[[bin]]
+name = "polars_bench"
+path = "src/main.rs"
+
+[[bin]]
+name = "duckdb_bench"
+path = "src/duckdb_bench.rs"
+
+[[bin]]
+name = "duckdb_sparse"
+path = "src/duckdb_sparse.rs"
+
+[[bin]]
+name = "duckdb_simulation"
+path = "src/duckdb_simulation.rs"
+
+[[bin]]
+name = "duckdb_spatial_opt"
+path = "src/duckdb_spatial_opt.rs"
+
+[[bin]]
+name = "duckdb_latency"
+path = "src/duckdb_latency.rs"
+
+[[bin]]
+name = "duckdb_arrow"
+path = "src/duckdb_arrow.rs"
+
+[[bin]]
+name = "duckdb_arrow_spatial"
+path = "src/duckdb_arrow_spatial.rs"
+
+[[bin]]
+name = "duckdb_min_overhead"
+path = "src/duckdb_min_overhead.rs"
+
+[[bin]]
+name = "duckdb_deep_dive"
+path = "src/duckdb_deep_dive.rs"
+
+[[bin]]
+name = "duckdb_arrow_dive"
+path = "src/duckdb_arrow_dive.rs"
+
+[[bin]]
+name = "duckdb_push_logic"
+path = "src/duckdb_push_logic.rs"
+
+[[bin]]
+name = "duckdb_spatial_combat"
+path = "src/duckdb_spatial_combat.rs"
+
+[[bin]]
+name = "duckdb_rtree_check"
+path = "src/duckdb_rtree_check.rs"
+
+[[bin]]
+name = "duckdb_rtree_test"
+path = "src/duckdb_rtree_test.rs"
+
+[[bin]]
+name = "duckdb_rtree_correct"
+path = "src/duckdb_rtree_correct.rs"
+
+[[bin]]
+name = "duckdb_rtree_constant"
+path = "src/duckdb_rtree_constant.rs"
+
+[[bin]]
+name = "spatial_hashing_explained"
+path = "src/spatial_hashing_explained.rs"
+
+[[bin]]
+name = "duckdb_intersects_vs_join"
+path = "src/duckdb_intersects_vs_join.rs"
+
+[[bin]]
+name = "duckdb_prior_art"
+path = "src/duckdb_prior_art.rs"
+
+[[bin]]
+name = "arrow_polars_overhead"
+path = "src/arrow_polars_overhead.rs"
+
+[[bin]]
+name = "arrow_zerocopy_test"
+path = "src/arrow_zerocopy_test.rs"
 
 [dependencies]
 jemallocator = { version = "*" }
-polars = { path = "../polars/crates/polars", features = ["nightly", "dtype-full", "lazy", "polars-ops"] }
+polars = { version = "0.46", features = ["dtype-full", "lazy"] }
 rand = { version = "0.8.5" }
+duckdb = { version = "1.1.1", features = ["bundled"] }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "ecs_benchmarks"
+harness = false
