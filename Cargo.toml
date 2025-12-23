@@ -111,6 +111,18 @@ path = "src/duckdb_lua_vscalar.rs"
 name = "lua_vm_comparison"
 path = "src/lua_vm_comparison.rs"
 
+[[bin]]
+name = "lua_vector_udf"
+path = "src/lua_vector_udf.rs"
+
+[[bin]]
+name = "luajit_ffi_bench"
+path = "src/luajit_ffi_bench.rs"
+
+[[bin]]
+name = "duckdb_luajit_ffi"
+path = "src/duckdb_luajit_ffi.rs"
+
 [dependencies]
 jemallocator = { version = "*" }
 polars = { version = "0.46", features = ["dtype-full", "lazy"] }
