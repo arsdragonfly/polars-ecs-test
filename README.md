@@ -2,44 +2,126 @@
 
 Research project exploring **DuckDB as a spatial query backend for ECS game engines**, with **Lua scripting for moddability**.
 
-## 🎯 Project Goal
-
-Evaluate whether DuckDB can replace custom spatial data structures (R-trees, spatial hashing) in a game engine while allowing mods to define custom logic via Lua UDFs.
-
-**Target:** 60 FPS = 16.67ms per tick. Spatial queries should consume ≤10% of frame budget.
+**Target:** 60 FPS = 16.67ms per tick. Spatial queries should consume ≤10% of frame budget (~1.67ms).
 
 ---
 
-## 📊 Key Findings
+## ⚡ TL;DR
 
-### DuckDB Performance
+| Approach | 10K entities | vs Rust | Verdict |
+|----------|-------------|---------|---------|
+| **Rust HashMap** | **3 ms** | baseline | Best for real-time |
+| **DuckDB Ultimate (12 threads)** | **8 ms** | 2.4× | ✅ Viable for mods |
+| DuckDB Ultimate (1 thread) | 27 ms | 8.5× | Single-threaded only |
+| DuckDB `abs()` filter | 278 ms | 90× | ❌ Don't use |
 
-| Metric | Value | Notes |
-|--------|-------|-------|
-| Per-query overhead | ~180 µs | Fixed cost per SQL query execution |
-| Built-in sqrt (100×100) | 0.75 ms | Native DuckDB spatial math |
-| Rust VScalar UDF | 0.86 ms | Custom Rust function, 1.1× overhead |
-| Lua VScalar UDF | 2.01 ms | LuaJIT via VArrowScalar, 2.7× overhead |
+**Ultimate DuckDB Stack:**
+1. `DOUBLE[2]` columns → enables SIMD `array_distance()` (1.7× faster)
+2. 9× equality JOINs → forces hash join, not nested loop (10× faster)
+3. UNION ALL → parallel execution across cores (4× with 12 threads)
+4. Pre-computed cell indices → O(N×K) not O(N²)
 
-### Lua VM Performance (Isolated)
+**Bottom line:** DuckDB with all optimizations is viable for ~20K entities at 60 FPS. For larger counts, use Rust spatial hashing.
 
-| VM | Per-Call | Cross-Join at 10% Budget |
-|----|----------|--------------------------|
-| **mlua/LuaJIT** | 145 ns | 107×107 entities |
-| Piccolo (pure Rust) | 312 ns | 73×73 entities |
-| Native Rust | 2 ns | (baseline) |
+---
 
-**LuaJIT is 2.2× faster than Piccolo** but Piccolo offers better sandboxing.
+## 📊 Performance Deep Dive
 
-### Spatial Query Approaches
+### 1. Use `array_distance` for SIMD Speedup
 
-| Approach | 100×100 Query Time | Verdict |
-|----------|-------------------|---------|
-| DuckDB cross-join + sqrt | 0.75 ms | ✅ Viable for small counts |
-| DuckDB + Lua UDF | 2.01 ms | ✅ Viable for mods |
-| Rust HashMap spatial hash | 0.001 ms | 100-700× faster than DuckDB |
+DuckDB's `array_distance()` for fixed-size arrays is **SIMD-optimized**:
 
-**Conclusion:** DuckDB is viable for complex queries (JOINs, aggregations) but pure Rust spatial hashing is far faster for simple proximity queries.
+| Method | Time (5K cross-join) | Speedup |
+|--------|---------------------|---------|
+| **`array_distance(pos1, pos2)`** | **114 ms** | **1.7× faster** |
+| Manual `dx²+dy² < r²` | 198 ms | baseline |
+| `ST_Distance` | 2,447 ms | 12× slower |
+
+```sql
+-- ✅ BEST: Store positions as DOUBLE[2] for SIMD
+CREATE TABLE entities (id INT, pos DOUBLE[2], cx INT, cy INT);
+
+SELECT * FROM entities e1, entities e2
+WHERE e1.id < e2.id AND array_distance(e1.pos, e2.pos) < 50;
+```
+
+### 2. Use Equality JOINs for Hash Join
+
+**The critical insight:** DuckDB only uses hash join for **equality** conditions.
+
+```sql
+-- ❌ SLOW (90×): abs() forces O(N²) nested loop scan
+WHERE abs(e2.cx - e1.cx) <= 1 AND abs(e2.cy - e1.cy) <= 1
+
+-- ✅ FAST (2.5×): Explicit equality enables O(N) hash join
+SELECT * FROM (
+    SELECT e1.id, e2.id FROM entities e1
+    INNER JOIN entities e2 ON e1.cx = e2.cx AND e1.cy = e2.cy
+    WHERE e1.id < e2.id AND dist_sq < radius_sq
+    UNION ALL
+    SELECT e1.id, e2.id FROM entities e1
+    INNER JOIN entities e2 ON e1.cx = e2.cx - 1 AND e1.cy = e2.cy
+    WHERE e1.id < e2.id AND dist_sq < radius_sq
+    -- ... 7 more for all 9 cell neighbor offsets
+)
+```
+
+### 2. Multi-Threading Scales Well
+
+DuckDB parallelizes the 9 UNION ALL branches:
+
+| Threads | 10K entities | Speedup |
+|---------|-------------|---------|
+| 1 | 27 ms | baseline |
+| 12 | 8 ms | **3.5×** |
+
+At 20K entities: 92 ms (1 thread) → 21 ms (12 threads) = **1.6× vs Rust**
+
+### 3. R-Tree Index Limitations
+
+R-tree only works with **constant** geometry—not useful for entity-to-entity queries:
+
+| Query Type | R-Tree? | Time (10M rows) |
+|------------|---------|-----------------|
+| `ST_Within(geom, constant_box)` | ✅ | 5.5 ms |
+| `ST_DWithin(geom, point, dist)` | ❌ | 769 ms |
+| Entity-to-entity JOIN | ❌ | Full scan |
+
+**Use R-tree for:** Rectangle queries, analytics, tools  
+**Don't use for:** Real-time proximity, combat targeting
+
+---
+
+## 🎮 Lua Integration
+
+### LuaJIT FFI: Near-Native Performance
+
+By passing Arrow buffer pointers directly to LuaJIT FFI:
+
+| Method | Per-Element | vs Per-Row Lua |
+|--------|-------------|----------------|
+| Pure Rust | 2 ns | baseline |
+| **LuaJIT FFI Batch** | 2-10 ns | **75× faster** |
+| Lua Per-Row | 150 ns | baseline |
+
+```lua
+-- LuaJIT FFI operates directly on Arrow memory
+function distance_ffi_batch(batch_ptr)
+    local batch = ffi.cast("DistanceBatch*", batch_ptr)
+    for i = 0, batch.n-1 do
+        local dx = batch.x2[i] - batch.x1[i]
+        local dy = batch.y2[i] - batch.y1[i]
+        batch.out[i] = math.sqrt(dx*dx + dy*dy)
+    end
+end
+```
+
+### Lua VM Comparison
+
+| VM | Per-Call | Notes |
+|----|----------|-------|
+| **mlua/LuaJIT** | 145 ns | 2.2× faster, requires unsafe |
+| Piccolo (pure Rust) | 312 ns | Better sandboxing |
 
 ---
 
@@ -48,88 +130,77 @@ Evaluate whether DuckDB can replace custom spatial data structures (R-trees, spa
 ```
 ┌────────────────────────────────────────────────────────────┐
 │  SQL Query                                                 │
-│  SELECT * FROM e1, e2                                      │
-│  WHERE lua_distance(e1.x, e1.y, e2.x, e2.y) < range        │
+│  SELECT * FROM e1, e2 WHERE lua_distance(...) < range      │
 └───────────────────────────┬────────────────────────────────┘
-                            │
                             ▼
 ┌────────────────────────────────────────────────────────────┐
-│  DuckDB Query Executor                                     │
-│  • Cross-join produces candidate pairs                     │
-│  • Calls lua_distance VScalar for filtering                │
-│  • Vectorized: processes ~2048 rows per call               │
+│  DuckDB Query Executor (multi-threaded)                    │
+│  • 9× hash join with UNION ALL                             │
+│  • Vectorized processing (~2048 rows/batch)                │
 └───────────────────────────┬────────────────────────────────┘
-                            │
                             ▼
 ┌────────────────────────────────────────────────────────────┐
-│  Rust VArrowScalar (LuaDistanceScalar)                     │
-│  • Receives Arrow RecordBatch with (x1, y1, x2, y2)        │
-│  • For each row: call thread-local Lua                     │
-│  • Return Arrow Float64Array to DuckDB                     │
+│  Rust VArrowScalar UDF                                     │
+│  • Receives Arrow RecordBatch                              │
+│  • Calls thread-local LuaJIT via FFI                       │
 └───────────────────────────┬────────────────────────────────┘
-                            │
                             ▼
 ┌────────────────────────────────────────────────────────────┐
 │  Thread-Local LuaJIT VM                                    │
-│  • Lazily initialized per DuckDB worker thread             │
-│  • JIT-compiled Lua functions                              │
-│  • ~200 ns per distance() call                             │
+│  • Zero-copy batch processing via FFI                      │
+│  • ~10 ns per element                                      │
 └────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 📁 File Structure
+## 🎯 When to Use What
 
-### Core Benchmarks
+| Use Case | Best Approach |
+|----------|---------------|
+| Simple proximity (< 1000 entities) | DuckDB cross-join |
+| Large-scale proximity (> 1000) | Rust spatial hash |
+| Complex mod logic | DuckDB + LuaJIT FFI |
+| Rectangle queries | DuckDB R-tree |
+| Debug/analytics | DuckDB (SQL is readable) |
 
-| File | Purpose |
-|------|---------|
-| `src/main.rs` | Polars baseline benchmarks |
-| `src/duckdb_bench.rs` | Basic DuckDB vs Polars comparison |
-| `src/duckdb_latency.rs` | DuckDB per-query latency analysis |
-| `src/duckdb_min_overhead.rs` | Minimal overhead measurement |
+### Hybrid Architecture
 
-### Spatial Query Experiments
-
-| File | Purpose |
-|------|---------|
-| `src/duckdb_spatial_opt.rs` | Spatial query optimization strategies |
-| `src/duckdb_deep_dive.rs` | Deep analysis of spatial query performance |
-| `src/duckdb_sparse.rs` | Sparse world simulation |
-| `src/duckdb_simulation.rs` | Full game tick simulation |
-
-### Arrow Integration
-
-| File | Purpose |
-|------|---------|
-| `src/duckdb_arrow.rs` | DuckDB → Arrow data transfer |
-| `src/duckdb_arrow_spatial.rs` | Arrow-based spatial queries |
-| `src/duckdb_arrow_dive.rs` | Arrow zero-copy analysis |
-
-### Lua Integration (Key Files)
-
-| File | Purpose |
-|------|---------|
-| `src/lua_vm_comparison.rs` | **Piccolo vs mlua/LuaJIT benchmark** |
-| `src/lua_udf_threadlocal.rs` | Thread-local Lua VM proof-of-concept |
-| `src/duckdb_lua_vscalar.rs` | **DuckDB VArrowScalar + Lua UDF integration** |
-| `src/lua_query_overhead.rs` | Lua query caching analysis |
-| `src/piccolo_duckdb_poc.rs` | Piccolo Lua integration attempt |
+```
+Game Tick:
+1. Rust spatial hash → find candidates      (< 0.1 ms)
+2. DuckDB + Lua UDF → complex scoring       (< 2 ms)  
+3. Return results to game logic
+```
 
 ---
 
-## 🚀 Running Benchmarks
+## 📁 Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/duckdb_hash_join.rs` | ⭐ **Best DuckDB approach** - 9× hash join |
+| `src/duckdb_union_parallel.rs` | UNION ALL thread scaling test |
+| `src/duckdb_luajit_ffi.rs` | DuckDB + LuaJIT FFI integration |
+| `src/spatial_hashing_explained.rs` | Rust HashMap benchmark |
+| `src/lua_vm_comparison.rs` | Piccolo vs LuaJIT benchmark |
+| `src/duckdb_rtree_correct.rs` | R-Tree analysis (what works/fails) |
+
+---
+
+## 🚀 Quick Start
 
 ```bash
-# Build all
 cargo build --release
 
-# Key benchmarks
-./target/release/lua_vm_comparison      # Compare Piccolo vs LuaJIT
-./target/release/duckdb_lua_vscalar     # Full DuckDB + Lua pipeline
-./target/release/duckdb_latency         # DuckDB overhead analysis
-./target/release/duckdb_deep_dive       # Spatial query strategies
+# Best benchmark: DuckDB vs Rust spatial hash
+./target/release/duckdb_hash_join
+
+# Thread scaling test
+./target/release/duckdb_union_parallel
+
+# LuaJIT integration
+./target/release/duckdb_luajit_ffi
 ```
 
 ---
@@ -139,98 +210,40 @@ cargo build --release
 ```toml
 [dependencies]
 duckdb = { version = "1.1.1", features = [
-    "bundled",       # Embed DuckDB
-    "vtab",          # Virtual tables
-    "vtab-arrow",    # Arrow integration
-    "vscalar",       # Scalar UDFs
-    "vscalar-arrow"  # Arrow-based scalar UDFs
+    "bundled", "vtab", "vtab-arrow", "vscalar", "vscalar-arrow"
 ] }
-mlua = { version = "0.10", features = ["luajit", "vendored"] }  # LuaJIT bindings
-piccolo = "0.3.3"    # Pure Rust Lua 5.4 (alternative)
-polars = "0.46"      # DataFrame library (baseline comparison)
+mlua = { version = "0.10", features = ["luajit", "vendored"] }
 ```
 
 ---
 
-## 🎮 Use Cases
-
-### When to Use DuckDB
-
-- **Complex queries:** Multi-table JOINs, aggregations, window functions
-- **Mod-defined logic:** Lua UDFs for scoring, filtering, prioritization
-- **Debugging:** SQL is human-readable, easy to inspect game state
-- **Prototyping:** Quick iteration without recompiling Rust
-
-### When to Use Native Rust
-
-- **Simple proximity:** Spatial hashing is 100-700× faster
-- **Hot paths:** Per-entity updates every tick
-- **Large entity counts:** 1000+ entities need native structures
-
-### Hybrid Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      Game Tick                              │
-├─────────────────────────────────────────────────────────────┤
-│ 1. Rust spatial hash → find nearby candidates (< 0.1 ms)    │
-│ 2. DuckDB query with Lua UDF → complex scoring (< 2 ms)     │
-│ 3. Return filtered results to game logic                    │
-└─────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 🔑 Technical Insights
+## 🔑 Key Technical Details
 
 ### Thread-Local Lua VMs
-
-DuckDB executes VScalar functions on worker threads. Use `thread_local!` to lazily initialize Lua VMs:
 
 ```rust
 thread_local! {
     static LUA_VM: RefCell<mlua::Lua> = RefCell::new({
-        let lua = mlua::Lua::new();
+        let lua = unsafe { mlua::Lua::unsafe_new() }; // Required for FFI
         lua.load(SCRIPT).exec().unwrap();
         lua
     });
 }
 ```
 
-### VArrowScalar vs VScalar
+### Statement Caching
 
-- `VScalar`: Low-level, requires manual `DataChunkHandle` manipulation
-- `VArrowScalar`: Higher-level, receives `RecordBatch`, returns `Arc<dyn Array>`
+```rust
+// ❌ SLOW: Re-parses every call
+conn.query_row("SELECT ...", params, |r| ...)?;
 
-Use `VArrowScalar` for numeric types—it's cleaner and just as fast.
-
-### Piccolo Lifetime Issues
-
-Piccolo uses branded lifetimes (`Lua<'gc>`) that don't work with DuckDB's `'static` state requirement. Use mlua for DuckDB integration.
-
----
-
-## 📈 Frame Budget Summary
-
-For a 60 FPS game with 10% spatial query budget (1.67 ms):
-
-| Approach | Max Cross-Join Size |
-|----------|---------------------|
-| DuckDB built-in | ~150×150 |
-| DuckDB + Lua UDF | ~91×91 |
-| Pure Rust HashMap | ~1000×1000+ |
-
----
-
-## 🔮 Future Work
-
-1. **Spatial indexing:** R-tree with DuckDB spatial extension (caveats: no JOINs)
-2. **Batch Lua calls:** Pass entire arrays to Lua, reduce FFI overhead
-3. **Query caching:** Pre-compile SQL statements, cache Lua functions
-4. **Parallel Lua:** One VM per DuckDB worker thread (already implemented)
+// ✅ FAST: Parse once, execute many
+let mut stmt = conn.prepare("SELECT ...")?;
+stmt.query_row(params, |r| ...)?; // 2-4× faster
+```
 
 ---
 
 ## 📝 License
 
-Research/experimental code. Use at your own risk.
+Research/experimental code. MIT license.

@@ -123,6 +123,50 @@ path = "src/luajit_ffi_bench.rs"
 name = "duckdb_luajit_ffi"
 path = "src/duckdb_luajit_ffi.rs"
 
+[[bin]]
+name = "duckdb_arrow_practices"
+path = "src/duckdb_arrow_practices.rs"
+
+[[bin]]
+name = "duckdb_optimized_spatial"
+path = "src/duckdb_optimized_spatial.rs"
+
+[[bin]]
+name = "duckdb_rtree_bulk"
+path = "src/duckdb_rtree_bulk.rs"
+
+[[bin]]
+name = "duckdb_sqrt_prefilter"
+path = "src/duckdb_sqrt_prefilter.rs"
+
+[[bin]]
+name = "duckdb_spatial_hash"
+path = "src/duckdb_spatial_hash.rs"
+
+[[bin]]
+name = "duckdb_spatial_deep"
+path = "src/duckdb_spatial_deep.rs"
+
+[[bin]]
+name = "duckdb_hash_join"
+path = "src/duckdb_hash_join.rs"
+
+[[bin]]
+name = "duckdb_union_parallel"
+path = "src/duckdb_union_parallel.rs"
+
+[[bin]]
+name = "duckdb_math_funcs"
+path = "src/duckdb_math_funcs.rs"
+
+[[bin]]
+name = "duckdb_func_discovery"
+path = "src/duckdb_func_discovery.rs"
+
+[[bin]]
+name = "duckdb_ultimate"
+path = "src/duckdb_ultimate.rs"
+
 [dependencies]
 jemallocator = { version = "*" }
 polars = { version = "0.46", features = ["dtype-full", "lazy"] }

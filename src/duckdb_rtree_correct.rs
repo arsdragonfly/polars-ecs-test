@@ -116,8 +116,13 @@ fn main() -> Result<()> {
                  if uses_index { "✓ INDEX" } else { "✗ SCAN" });
     }
 
-    // Test what DOESN'T work - joins
+    // Test what DOESN'T work - joins (use smaller dataset for speed)
     println!("\n--- What DOESN'T use R-tree (joins) ---\n");
+
+    // Create smaller table for join test to keep benchmark fast
+    conn.execute_batch(
+        "CREATE TABLE t1_small AS SELECT * FROM t1 LIMIT 100000;"
+    )?;
 
     conn.execute_batch(
         "CREATE TABLE query_points AS 
@@ -127,18 +132,18 @@ fn main() -> Result<()> {
 
     let start = Instant::now();
     let count3: i64 = conn.query_row(
-        "SELECT count(*) FROM t1, query_points q
-         WHERE ST_DWithin(t1.geom, q.geom, 10)",
+        "SELECT count(*) FROM t1_small, query_points q
+         WHERE ST_DWithin(t1_small.geom, q.geom, 10)",
         [],
         |r| r.get(0)
     )?;
     let join_time = start.elapsed();
-    println!("  JOIN with ST_DWithin: {:>8.2} ms ({} matches)", 
+    println!("  JOIN with ST_DWithin (100K × 100): {:>8.2} ms ({} matches)", 
              join_time.as_secs_f64() * 1000.0, count3);
 
     // Check plan
     let plan: String = conn.query_row(
-        "EXPLAIN SELECT count(*) FROM t1, query_points q WHERE ST_DWithin(t1.geom, q.geom, 10)",
+        "EXPLAIN SELECT count(*) FROM t1_small, query_points q WHERE ST_DWithin(t1_small.geom, q.geom, 10)",
         [],
         |r| r.get(1)
     )?;
@@ -151,8 +156,28 @@ fn main() -> Result<()> {
     // Test multiple point queries (this is what games need)
     println!("\n--- Multiple Point Queries (game use case) ---\n");
 
+    // Using ST_Within with envelope (uses R-tree)
     let start = Instant::now();
     for i in 0..100 {
+        let x = (i * 100) as f64;
+        let y = (i * 100) as f64;
+        let _: i64 = conn.query_row(
+            &format!(
+                "SELECT count(*) FROM t1 WHERE ST_Within(geom, ST_MakeEnvelope({}, {}, {}, {}))", 
+                x - 50.0, y - 50.0, x + 50.0, y + 50.0
+            ),
+            [],
+            |r| r.get(0)
+        )?;
+    }
+    let query_time = start.elapsed();
+    println!("  100 ST_Within queries (uses R-tree): {:.2} ms total, {:.2} ms/query", 
+             query_time.as_secs_f64() * 1000.0,
+             query_time.as_secs_f64() * 1000.0 / 100.0);
+
+    // Using ST_DWithin (does NOT use R-tree) - only 10 queries since it's slow
+    let start = Instant::now();
+    for i in 0..10 {
         let x = (i * 100) as f64;
         let y = (i * 100) as f64;
         let _: i64 = conn.query_row(
@@ -163,16 +188,17 @@ fn main() -> Result<()> {
             |r| r.get(0)
         )?;
     }
-    let query_time = start.elapsed();
-    println!("  100 point queries: {:.2} ms total, {:.2} ms/query", 
-             query_time.as_secs_f64() * 1000.0,
-             query_time.as_secs_f64() * 1000.0 / 100.0);
+    let query_time_dwithin = start.elapsed();
+    println!("  10 ST_DWithin queries (NO R-tree):  {:.2} ms total, {:.2} ms/query", 
+             query_time_dwithin.as_secs_f64() * 1000.0,
+             query_time_dwithin.as_secs_f64() * 1000.0 / 10.0);
 
     println!("\n--- Conclusion ---");
-    println!("  R-tree WORKS for: Simple SELECT + spatial predicate + CONSTANT geometry");
-    println!("  R-tree FAILS for: JOINs, correlated subqueries, nearest-neighbor combat");
-    println!("  For games: Each entity query IS using R-tree, but ~180µs overhead remains");
-    println!("  The ~180µs is DuckDB's per-query execution overhead, not index lookup");
+    println!("  R-tree WORKS for: ST_Within, ST_Intersects with CONSTANT geometry");
+    println!("  R-tree FAILS for: ST_DWithin, JOINs, correlated subqueries");
+    println!("  With R-tree: ~1.3 ms/query (good for background tasks, not 60fps)");
+    println!("  Without R-tree: ~730 ms/query (full scan of 10M rows)");
+    println!("  For real-time games: Use Rust spatial hashing (~10 ns/query)");
 
     Ok(())
 }
