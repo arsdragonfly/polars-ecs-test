@@ -167,13 +167,50 @@ path = "src/duckdb_func_discovery.rs"
 name = "duckdb_ultimate"
 path = "src/duckdb_ultimate.rs"
 
+[[bin]]
+name = "lua_simd_showdown"
+path = "src/lua_simd_showdown.rs"
+
+[[bin]]
+name = "arrow_overhead_test"
+path = "src/arrow_overhead_test.rs"
+
+[[bin]]
+name = "prepared_stmt_deep_dive"
+path = "src/prepared_stmt_deep_dive.rs"
+
+[[bin]]
+name = "zerocopy_investigation"
+path = "src/zerocopy_investigation.rs"
+
+[[bin]]
+name = "duckdb_vs_polars"
+path = "src/duckdb_vs_polars.rs"
+
+[[bin]]
+name = "true_overhead"
+path = "src/true_overhead.rs"
+
+[[bin]]
+name = "polars_joins"
+path = "src/polars_joins.rs"
+
 [dependencies]
 jemallocator = { version = "*" }
-polars = { version = "0.46", features = ["dtype-full", "lazy"] }
+polars = { version = "0.51", features = ["dtype-full", "lazy"] }
 rand = { version = "0.8.5" }
 duckdb = { version = "1.1.1", features = ["bundled", "vtab", "vtab-arrow", "vscalar", "vscalar-arrow"] }
 piccolo = "0.3.3"
 mlua = { version = "0.10", features = ["luajit", "vendored"] }
+
+[profile.release]
+# Reduce linker memory usage to avoid OOM during compilation
+lto = "thin"
+codegen-units = 16
+
+[profile.dev]
+# Reduce memory usage for debug builds too
+codegen-units = 16
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

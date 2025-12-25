@@ -1,7 +1,4 @@
-use polars::df;
 use polars::prelude::*;
-use std::fmt::format;
-use std::iter;
 // use jemallocator::Jemalloc;
 use rand::Rng;
 use std::time::Instant;
@@ -46,26 +43,21 @@ fn main() {
     // println!("Average time taken to create DataFrame: {:?}", duration.div_f32(size as f32));
 
     let start = Instant::now();
-    let mut lf2 = DataFrame::default()
+    // Create id column using Series
+    let id_series = Series::new("id".into(), (0..size as u32).collect::<Vec<u32>>());
+    let mut lf2 = DataFrame::new(vec![id_series.into()])
+        .unwrap()
         .lazy()
         .with_columns(vec![
-            lit(LiteralValue::Range {
-                low: 0,
-                high: size as i64,
-                dtype: DataType::UInt32,
-            })
-            .alias("id"),
-        ])
-        .with_columns(vec![
             // position component
-            lit(LiteralValue::Float32(0.0)).alias("x"),
-            lit(LiteralValue::Float32(0.0)).alias("y"),
-            // lit(LiteralValue::Float32(0.0)).alias("z"),
+            lit(0.0f32).alias("x"),
+            lit(0.0f32).alias("y"),
+            // lit(0.0f32).alias("z"),
 
             // velocity component
-            lit(LiteralValue::Float32(1.0)).alias("vx"),
-            lit(LiteralValue::Float32(1.0)).alias("vy"),
-            // lit(LiteralValue::Float32(1.0)).alias("vz"),
+            lit(1.0f32).alias("vx"),
+            lit(1.0f32).alias("vy"),
+            // lit(1.0f32).alias("vz"),
         ])
         .with_columns(vec![
             // position component
@@ -73,9 +65,9 @@ fn main() {
             // velocity component
             // as_struct(vec![lit(1.0).alias("vx"), lit(1.0).alias("vy")]).alias("velocity"),
             // data component
-            lit(LiteralValue::Int32(0)).alias("data_thingy"),
-            lit(LiteralValue::Float64(0.0)).alias("data_dingy"),
-            lit(LiteralValue::Boolean(false)).alias("data_mingy"),
+            lit(0i32).alias("data_thingy"),
+            lit(0.0f64).alias("data_dingy"),
+            lit(false).alias("data_mingy"),
         ]);
     // add rng for data component
     lf2 = add_xoshiro_seed_df(lf2, "data_rng", 340383);
@@ -85,37 +77,37 @@ fn main() {
     // add player component
     lf2 = add_xoshiro_on_df(lf2, "player_rng");
     lf2 = lf2.with_columns(vec![
-        lit(LiteralValue::Int32(PlayerType::NPC as i32)).alias("player_type"),
+        lit(PlayerType::NPC as i32).alias("player_type"),
     ]);
 
     // add health component
     lf2 = lf2.with_columns(vec![
-        lit(LiteralValue::Int32(0)).alias("health_hp"),
-        lit(LiteralValue::Int32(0)).alias("health_maxhp"),
-        lit(LiteralValue::Int32(HealthStatusEffect::Spawn as i32))
+        lit(0i32).alias("health_hp"),
+        lit(0i32).alias("health_maxhp"),
+        lit(HealthStatusEffect::Spawn as i32)
             .cast(DataType::Int32)
             .alias("health_shield"),
     ]);
 
     // add damage component
     lf2 = lf2.with_columns(vec![
-        lit(LiteralValue::Int32(0)).alias("damage_atk"),
-        lit(LiteralValue::Int32(0)).alias("damage_def"),
+        lit(0i32).alias("damage_atk"),
+        lit(0i32).alias("damage_def"),
     ]);
 
     // add sprite component
     lf2 = lf2.with_columns(vec![
-        lit(LiteralValue::UInt8(Sprite::Default as u8)).alias("sprite_char"),
+        lit(Sprite::Default as u8).alias("sprite_char"),
     ]);
 
     // initComponent
     lf2 = lf2.with_column(
         when((col("player_rng_cur") % lit(100)).lt_eq(lit(2)))
-            .then(lit(LiteralValue::Int32(PlayerType::NPC as i32)))
+            .then(lit(PlayerType::NPC as i32))
             .otherwise(when(
                 (col("player_rng_cur") % lit(100)).lt_eq(lit(29)),
-            ).then(lit(LiteralValue::Int32(PlayerType::Hero as i32)))
-            .otherwise(lit(LiteralValue::Int32(PlayerType::Monster as i32)))).alias("player_type")
+            ).then(lit(PlayerType::Hero as i32))
+            .otherwise(lit(PlayerType::Monster as i32))).alias("player_type")
     );
 
     lf2 = xoshiro_advance_state(lf2, "player_rng");
@@ -151,7 +143,7 @@ fn main() {
     lf2 = xoshiro_advance_state(lf2, "player_rng");
 
     lf2 = lf2.with_column(
-        lit(LiteralValue::UInt8(Sprite::Spawn as u8)).alias("sprite_char")
+        lit(Sprite::Spawn as u8).alias("sprite_char")
     );
 
     let spawnAreaMaxX: u32 = 320;
@@ -234,7 +226,7 @@ fn add_xoshiro_seed_df(lf: LazyFrame, rng_name: &str, seed: u32) -> LazyFrame {
         ])
         .alias(format!("{}_rng", rng_name)),
     )
-    .select([all().exclude([format!("{}_seed", rng_name)])])
+    .drop(Selector::ByName { names: vec![PlSmallStr::from(format!("{}_seed", rng_name))].into(), strict: false })
 }
 
 fn add_xoshiro_on_df(lf: LazyFrame, rng_name: &str) -> LazyFrame {
@@ -242,14 +234,13 @@ fn add_xoshiro_on_df(lf: LazyFrame, rng_name: &str) -> LazyFrame {
     // mimic the original benchmark seeding logic
     let mut rng = rand::thread_rng();
     let random_number = rng.r#gen::<u32>();
-    lf.with_column(
-        lit(LiteralValue::Range {
-            low: random_number as i64,
-            high: (random_number + size as u32) as i64,
-            dtype: DataType::UInt32,
-        })
-        .alias(format!("{}_seed", rng_name)),
+    // Create seed column using lit and row index arithmetic
+    lf.with_row_index(PlSmallStr::from(format!("{}_row_idx", rng_name)), None)
+    .with_column(
+        (col(format!("{}_row_idx", rng_name)).cast(DataType::UInt32) + lit(random_number))
+            .alias(format!("{}_seed", rng_name)),
     )
+    .drop(Selector::ByName { names: vec![PlSmallStr::from(format!("{}_row_idx", rng_name))].into(), strict: false })
     .with_columns(vec![
         as_struct(vec![
             (col(format!("{}_seed", rng_name)) + lit(3)).alias(format!("{}_0", rng_name)),
@@ -261,7 +252,7 @@ fn add_xoshiro_on_df(lf: LazyFrame, rng_name: &str) -> LazyFrame {
         (col(format!("{}_seed", rng_name)) + lit(13)).alias(format!("{}_cur", rng_name)),
     ]
     )
-    .select([all().exclude([format!("{}_seed", rng_name)])])
+    .drop(Selector::ByName { names: vec![PlSmallStr::from(format!("{}_seed", rng_name))].into(), strict: false })
 }
 
 fn xoshiro_rotl(input: Expr, k: i32) -> Expr {
@@ -329,5 +320,5 @@ fn xoshiro_advance_state(lf: LazyFrame, rng_name: &str) -> LazyFrame {
         ])
         .alias(format!("{}_rng", rng_name)),
     )
-    .select([all().exclude(["t"])])
+    .drop(Selector::ByName { names: vec![PlSmallStr::from("t")].into(), strict: false })
 }
