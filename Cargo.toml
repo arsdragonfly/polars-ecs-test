@@ -199,12 +199,24 @@ path = "src/polars_joins.rs"
 name = "polars_update"
 path = "src/polars_update.rs"
 
+[[bin]]
+name = "duckdb_overhead_deep"
+path = "src/duckdb_overhead_deep.rs"
+
+[[bin]]
+name = "duckdb_config_tuning"
+path = "src/duckdb_config_tuning.rs"
+
+[[bin]]
+name = "lua_batch_patterns"
+path = "src/lua_batch_patterns.rs"
+
 [dependencies]
 jemallocator = { version = "*" }
 polars = { version = "0.52", features = ["dtype-full", "lazy", "timezones", "is_in"] }
 polars-ops = { version = "0.52" }
 rand = { version = "0.8.5" }
-duckdb = { version = "1.1.1", features = ["bundled", "vtab", "vtab-arrow", "vscalar", "vscalar-arrow"] }
+duckdb = { version = "1.4.3", features = ["bundled", "vtab", "vtab-arrow", "vscalar", "vscalar-arrow"] }
 piccolo = "0.3.3"
 mlua = { version = "0.10", features = ["luajit", "vendored"] }
 
