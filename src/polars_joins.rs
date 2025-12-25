@@ -3,6 +3,7 @@
 //! Exploring complex joins in Polars, especially cross joins for spatial queries
 
 use polars::prelude::*;
+use polars_ops::frame::MaintainOrderJoin;
 use std::time::Instant;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -29,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Method 1: cross_join() ---\n");
     
     let start = Instant::now();
-    let cross = df.cross_join(&df, Some("_right".into()), None)?;
+    let cross = df.cross_join(&df, Some("_right".into()), None, MaintainOrderJoin::None)?;
     let cross_time = start.elapsed();
     
     println!("  Result: {} rows ({}×{})", cross.height(), n, n);
@@ -56,7 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Method 3: Cross join + distance calculation ---\n");
     
     let start = Instant::now();
-    let with_dist = df.cross_join(&df, Some("_right".into()), None)?
+    let with_dist = df.cross_join(&df, Some("_right".into()), None, MaintainOrderJoin::None)?
         .lazy()
         .filter(col("id").lt(col("id_right")))
         .with_column(
@@ -77,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Method 4: Pairs within distance 20 ---\n");
     
     let start = Instant::now();
-    let nearby = df.cross_join(&df, Some("_right".into()), None)?
+    let nearby = df.cross_join(&df, Some("_right".into()), None, MaintainOrderJoin::None)?
         .lazy()
         .filter(col("id").lt(col("id_right")))
         .with_column(
@@ -98,7 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Method 5: Sum of all distances ---\n");
     
     let start = Instant::now();
-    let sum_result = df.cross_join(&df, Some("_right".into()), None)?
+    let sum_result = df.cross_join(&df, Some("_right".into()), None, MaintainOrderJoin::None)?
         .lazy()
         .filter(col("id").lt(col("id_right")))
         .select([
@@ -140,7 +141,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
         
         let start = Instant::now();
-        let result = test_df.cross_join(&test_df, Some("_right".into()), None)?
+        let result = test_df.cross_join(&test_df, Some("_right".into()), None, MaintainOrderJoin::None)?
             .lazy()
             .filter(col("id").lt(col("id_right")))
             .select([
@@ -193,7 +194,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let polars_df = df!("id" => &ids, "x" => &xs, "y" => &ys)?;
     
     let start = Instant::now();
-    let _ = polars_df.cross_join(&polars_df, Some("_right".into()), None)?
+    let _ = polars_df.cross_join(&polars_df, Some("_right".into()), None, MaintainOrderJoin::None)?
         .lazy()
         .filter(col("id").lt(col("id_right")))
         .select([
